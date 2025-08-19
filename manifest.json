@@ -1,0 +1,24 @@
+{
+    "manifest_version": 3,
+    "name": "steam trade offer enchanted by p90-abuser",
+    "version": "0.0.1",
+    "description": "enchanted steam trade offer experience",
+    "permissions": [
+        "scripting",
+        "offscreen"
+    ],
+    "host_permissions":[
+        "https://steamcommunity.com/*"
+    ],
+    "background": {
+        "service_worker": "index.js"
+    },
+    "content_scripts":[
+        {
+            "js": ["content.js"],
+            "matches": [
+                "https://steamcommunity.com/tradeoffer/new/?partner=*"
+            ]
+        }
+    ]
+}
