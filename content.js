@@ -1,20 +1,32 @@
-chrome.runtime.onMessage.addListener(async (message, sender ,sendResponse) =>{
+window.addEventListener('load', async function () {
 
-    if(message.sender == 'content_worker') {
+    let connected_server = false
 
-        //content script connected
-        if(message.connect) {
-            sendResponse({connected:true,id:sender.tab.id})
-            console.log('[content_worker] connected')
-            chrome.storage.session.set({content_worker:true})
-            
+    let price_list = {}
+
+    var port = chrome.runtime.connect({name: "worker"});
+
+    //one time receive message 
+    chrome.runtime.sendMessage({sender:'content_worker',connect:true} ,function(response) {
+        if(response.connected) {
+          port.postMessage({connected:true})
+        }
+    });
+
+    //active connect message port
+    port.onMessage.addListener(async function(msg) {
+
+        if(msg.connected) {
+            connected_server = true;
         }
 
-    }
-});
+        if(msg.price) {
+            price_list[msg.price.steamid] = msg.price.prices
+        }
 
 
-window.addEventListener('load', async function () {
+
+    });
 
     let mysteamidregex = /UserYou\.SetSteamId\(\s\'(\d+)\'\s\)/gm
     let mysteamid = mysteamidregex.exec(document.body.innerHTML)[1]
@@ -32,8 +44,11 @@ window.addEventListener('load', async function () {
 
     let currentinventoryid = null;
     let currentinventory = null;
+    let currentinventoryappid = null;
     let loadinginventory = false;
 
+    //inventory name index array
+    let inventory_name_array = []
 
     //{assets: object, id: array(number)}
     let inventory = {};
@@ -57,6 +72,29 @@ window.addEventListener('load', async function () {
     const clickEvent = document.createEvent("MouseEvents");
         clickEvent.initEvent("dblclick", true, true);
         document.getElementById(item).dispatchEvent(clickEvent);
+  }
+
+
+  //input must be rgitemelement
+  function checkattribute(first,second) {
+
+                            let itemkey = Object.keys(first)
+
+                            let match = true;
+
+                            let notallowedkey = ['classid','position','assetid']
+
+                            for(let a = 0;a < itemkey.length;a++) {
+                                let key = itemkey[a];
+                                
+                                if(notallowedkey.indexOf(key) === -1) {
+                                    if(JSON.stringify(first[key]) !== JSON.stringify(second[key])) {
+                                         match = false;
+                        }
+                    }
+                }
+
+            return match
 
   }
 
@@ -64,14 +102,12 @@ window.addEventListener('load', async function () {
 
   async function swapinventory(item,shifted) {
 
-
     let intrade = false;
 
     if(item.target.offsetParent.offsetParent.offsetParent.className === 'trade_item_box') intrade = true
 
-
     //to do get item id ,  name , context id , appid , current steamid
-    let swapids = []
+     let swapids = []
 
     let split = item.target.hash && item.target.hash.replace('#','').split('_') ? item.target.hash.replace('#','').split('_') : false;
     if(!split) return false
@@ -82,7 +118,6 @@ window.addEventListener('load', async function () {
 
     //if intrade array doesnt create , create one
 
-    
     let whichsideregex= /(.*)_slot.*/gm
 
     let whichinv = whichsideregex.exec(item.target.offsetParent.offsetParent.id)
@@ -102,36 +137,20 @@ window.addEventListener('load', async function () {
 
 //add a same item bulk search using json.strigify to compare 
     if(shifted) {
-        //ofc add id first cause its the first item
-        swapids.push(id);
     
         let asset = inventory[steamid][appid].assets[id];
 
+        let invindex = inventory_name_array[steamid][appid][asset.market_hash_name]
+
         console.log('invtoget length ' + invtoget.length, 'invtoswap length ' + invtoswap.length);
 
-        let notallowedkey = ['classid','position','assetid']
 
-        for(let i = 0; i < invtoget.length; i++) {
-            let itemid = invtoget[i];
-            if(itemid != id) {
-                let notmatch = false;
+        for(let i = 0; i < invindex.length; i++) {
+            
+            let item = invindex[i];
 
-                let itemasset = inventory[steamid][appid].assets[itemid];
+            if(checkattribute(asset,item.details)) swapids = swapids.concat(item.id)
 
-
-                let itemkey = Object.keys(itemasset)
-
-                for(let a = 0;a < itemkey.length;a++) {
-                    let key = itemkey[a];
-
-                    if(notallowedkey.indexOf(key) === -1) {
-                        if(JSON.stringify(asset[key]) !== JSON.stringify(itemasset[key])) {
-                            notmatch = true;
-                        }
-                    }
-                }
-                if(!notmatch) swapids.push(itemid);
-            }
         }
     }
 
@@ -152,7 +171,7 @@ window.addEventListener('load', async function () {
         
     };
 
-    console.log(intrade , getInventory.length , getintrade.length);
+    console.log('intrade '+intrade , 'from start :'+ getInventory.length ,'to end :' + getintrade.length);
 
 
   }
@@ -161,24 +180,32 @@ window.addEventListener('load', async function () {
 
     setInterval( async () => {
 
-        let appidregex = /.*\/apps\/(\d*)\/.*/gm
-        let appid = appidregex.exec(document.getElementById('appselect_activeapp').children[0].currentSrc)[1]
-
-       let inventory_active =  document.getElementsByClassName('inventory_user_tab active')[0].innerText
-       
-       //define which inventory steam id 
-       currentinventoryid = inventory_active == 'Your inventory' ? mysteamid : themsteamid;
-       currentinventory = inventory_active; // text only (your inventory/their inventory) and has nothing in it
-
         if(!loadinginventory) {
 
             loadinginventory = true;
+
+       let appidregex = /.*\/apps\/(\d*)\/.*/gm
+       let appid = appidregex.exec(document.getElementById('appselect_activeapp').children[0].currentSrc)[1]
+
+       let inventory_active =  document.getElementsByClassName('inventory_user_tab active')[0].innerText
+       
+
+
+       //define which inventory steam id 
+       let ciid = inventory_active == 'Your inventory' ? mysteamid : themsteamid;
+       let ci = inventory_active; // text only (your inventory/their inventory) and has nothing in it
+
+       if(currentinventory != ci || currentinventoryappid != appid || currentinventoryid != ciid) {
+        currentinventoryappid = appid
+        currentinventoryid = ciid
+        currentinventory = ci
+
 
        //load inventory code
 
        if(!inventory[currentinventoryid]) inventory[currentinventoryid] = {}
 
-       if(!inventory[currentinventoryid][appid]) {
+       if(!inventory[currentinventoryid][currentinventoryappid]) {
        //made this due to csgo has added 3 types of inventory grid , 0 is all items,2 is without trade protected items, 16 is trade protected items only
        // adding this to cover all games (maybe it will works idk)
        let contextid = [1,2]
@@ -186,7 +213,7 @@ window.addEventListener('load', async function () {
        for(let i = 0;i < contextid.length;i ++) {
         let id = contextid[i];
 
-        let loadinventory = document.getElementById(`inventory_${currentinventoryid}_${appid}_${id}`);
+        let loadinventory = document.getElementById(`inventory_${currentinventoryid}_${currentinventoryappid}_${id}`);
 
         //definded 2 types in inventory finding , 1 is class itemHolder , 2 is class itemHolder disabled
         //1 is contain item , 2 is none
@@ -201,7 +228,7 @@ window.addEventListener('load', async function () {
             //using inject script and get inventory function
 
             const getItemsScript = `
-            inventory = User${inventory_active === 'Your inventory' ? 'You' : 'Them'}.getInventory(${appid},${id});
+            inventory = User${currentinventory === 'Your inventory' ? 'You' : 'Them'}.getInventory(${currentinventoryappid},${id});
 
             console.log(inventory)
             
@@ -266,10 +293,77 @@ window.addEventListener('load', async function () {
 
             //result output = {assets : object , id : array(number) }
             if(!inventory[currentinventoryid]) inventory[currentinventoryid] = {}
-            inventory[currentinventoryid][appid] = result 
-            
+            inventory[currentinventoryid][currentinventoryappid] = result 
+
+
+            //sort inventory id 
+
+            let ids = JSON.parse(JSON.stringify(inventory[currentinventoryid][currentinventoryappid].id))
+
+            let notallowedkey = ['classid','position','assetid']
+            for(let i = 0;i < ids.length;i++) {
+                let id = ids[i];
+
+                if(id) {
+                    let asset = inventory[currentinventoryid][appid].assets[id];
+
+                    //first checking the name
+                    if(!inventory_name_array[currentinventoryid]) inventory_name_array[currentinventoryid] = {}
+                    if(!inventory_name_array[currentinventoryid][currentinventoryappid]) inventory_name_array[currentinventoryid][currentinventoryappid] = {}
+                    if(!inventory_name_array[currentinventoryid][currentinventoryappid][asset.market_hash_name]) inventory_name_array[currentinventoryid][currentinventoryappid][asset.market_hash_name] = []
+
+
+                    //set item details
+                    let item = {};
+                    
+                    //check for item existence , if exist assign it
+                    if(inventory_name_array[currentinventoryid][currentinventoryappid][asset.market_hash_name] && inventory_name_array[currentinventoryid][currentinventoryappid][asset.market_hash_name].length > 0) {
+
+                        for(let i = 0;i < inventory_name_array[currentinventoryid][currentinventoryappid][asset.market_hash_name].length;i++) {
+                            let object = inventory_name_array[currentinventoryid][currentinventoryappid][asset.market_hash_name][i];
+
+                            let itemkey = Object.keys(object.details)
+
+                            let notmatch = false;
+
+                            for(let a = 0;a < itemkey.length;a++) {
+                                let key = itemkey[a];
+                                
+                                if(notallowedkey.indexOf(key) === -1) {
+                                    if(JSON.stringify(object.details[key]) !== JSON.stringify(asset[key])) {
+                                         notmatch = true;
+                        }
+                    }
+                }
+
+                            if(!notmatch) {
+                                item = object;
+                                break;
+                            }
+                        }
+                    }
+
+                    //if item not exist create new one
+                    if(!item.id && !item.details) {
+                        item = {id:[],details:asset}
+                        item.id.push(id)
+                        inventory_name_array[currentinventoryid][currentinventoryappid][asset.market_hash_name].push(item)
+                    } else {
+                        item.id.push(id)
+                    }
+
+                    //after done checking and adding ,  meaning the action is done
+
+
+
+                }
+            }
+
+            console.log(inventory_name_array)
+
        }
 
+    }
 
     }
 }
